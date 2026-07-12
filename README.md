@@ -1,7 +1,12 @@
-# Web3 Pi Dashboard (on LCD)
+# Web3 Pi LCD (`web3-pi-lcd`)
 
 
-***Introducing a unique hardware dashboard for Web3Pi project.*** 
+***Introducing a unique hardware dashboard for Web3Pi project.***
+
+> The dashboard firmware (`w3p-hwm`) ships as a **single self-contained aarch64
+> binary** — the font, logos and opening animation are embedded, so there is no
+> asset directory to deploy. On Web3 Pi vOS it is preinstalled and starts
+> automatically; the sections below cover standalone/manual use.
 
 The project allows for the installation of a colorful LCD in the Argon Neo 5 enclosure.
 We have designed our own 3D model of the enclosure cover with a space for the display. The assembly is simple, using snap-fits, with no tools required. The models are open-source, so anyone can print them on a 3D printer. The source code is also open-source, allowing users to add new functionalities, customize it to their needs, or add support for new displays.
@@ -13,9 +18,8 @@ We have designed our own 3D model of the enclosure cover with a space for the di
 
 ## Requirements
 
-- Rust toolchain (`cargo`/`rustc`)
-- Run on Raspberry Pi
-- [SPI interface enabled](docs/EnableSPI.md) (default on Web3Pi image)
+- Raspberry Pi 5 (aarch64)
+- [SPI interface enabled](docs/EnableSPI.md) — on by default on Web3 Pi vOS
 - 1.69" LCD display with ST7789V2 Driver
   - Waveshare 24382 - [product page](https://www.waveshare.com/1.69inch-lcd-module.htm)
   - Seeed Studio 104990802 - [product page](https://www.seeedstudio.com/1-69inch-240-280-Resolution-IPS-LCD-Display-Module-p-5755.html)
@@ -46,43 +50,33 @@ Mount the enclosure cover and secure it with two screws. Make sure to arrange th
 
 ## Installation
 
-First, download the repository.
+### Recommended: one-line installer
+
+Downloads the latest release binary + systemd unit, enables SPI, and starts the
+service. Re-run any time to update.
 
 ```shell
-sudo apt-get install git
-git clone https://github.com/Web3-Pi/web3-pi-dashboard.git
+curl -sSL https://raw.githubusercontent.com/Web3-Pi/web3-pi-lcd/main/install.sh | sudo bash
 ```
 
-The dashboard runs from a **prebuilt** aarch64 binary — there is no on-device
-compilation. Build it off-device with `mise run build-aarch64` (see
-[Build with mise](#build-with-mise)) or drop a release binary named `w3p-hwm`
-next to the scripts.
+Pin a specific version: `... | sudo bash -s -- v0.2.0`.
 
-### Run as a service - (recommended)   
+This installs the binary to `/usr/local/bin/w3p-hwm` and enables the
+`w3p-hwm.service` systemd unit. On Web3 Pi vOS you can also manage it from the
+**Control Panel → System → LCD Display** menu (install/update/start/stop).
+
+To **stop**: `sudo systemctl stop w3p-hwm.service`. To **uninstall**:
+`sudo ./remove_service.sh` (or disable + remove the unit and `/usr/local/bin/w3p-hwm`).
+
+### Dev: install from a local build
+
+Build off-device with `mise run build-aarch64` (see
+[Build with mise](#build-with-mise)), then from the repo:
 
 ```shell
-cd web3-pi-dashboard
-sudo ./create_service.sh
+sudo ./create_service.sh   # install the local binary + unit
+./run.sh                   # or run once in the foreground (Ctrl+C to stop)
 ```
-
-This installs the binary to `/usr/local/bin/w3p-hwm`, the assets to
-`/usr/local/share/w3p-hwm/` and enables the `w3p-hwm.service` systemd unit.
-
-To **stop** the program, execute `sudo systemctl stop w3p-hwm.service`
-
-To **uninstall** the service, execute `sudo ./remove_service.sh`
-
-
-### or run one time
-
-If you do not want to run the program as a service, you can run it once.   
-Note: Do not use both methods simultaneously.
-
-```shell
-cd web3-pi-dashboard
-./run.sh
-```
-To stop the program, press Ctrl+C.
 
 ## Web3 Pi vOS
 
@@ -94,32 +88,27 @@ Identical to the diagram above: display on SPI0 CE0 (`/dev/spidev0.0`),
 GPIO lines (BCM numbering): `DC=25`, `RST=27`, `BL=18`. The GPIO chip is
 resolved by its label `pinctrl-rp1` (override with `W3P_GPIOCHIP`).
 
-### 1. Enable SPI
+### SPI & install on vOS
 
-SPI is **disabled by default** on vOS. Either run:
+On current Web3 Pi vOS images SPI is **enabled by default** (`dtparam=spi=on`
+baked into the image) and `w3p-hwm` is **preinstalled and enabled** — the panel
+lights up on first boot, nothing to do.
 
-```shell
-sudo ./scripts/enable-spi.sh
-```
+To (re)install or update on a running device, use the one-line installer above
+or the **Control Panel → System → LCD Display** menu. If you are on an older
+image without SPI on, `install.sh` enables it for you (reboot required), or run
+`sudo ./scripts/enable-spi.sh`.
 
-or add `dtparam=spi=on` to `/boot/firmware/config.txt` (e.g. via the control
-panel's *Edit Boot Config*), then reboot.
-
-### 2. Install
-
-Place the prebuilt `w3p-hwm` binary next to `create_service.sh` (or build into
-`target/aarch64-unknown-linux-gnu/release/`), then:
-
-```shell
-sudo ./create_service.sh
-```
+A missing or unwired panel is **not** fatal: the service stays `active` and
+starts rendering as soon as a panel is present (retry with backoff), so it never
+crash-loops on a Pi without the LCD.
 
 ### Environment variables
 
 The service works out of the box; behaviour can be tuned with the `W3P_*`
 environment variables documented in [docs/Configuration.md](docs/Configuration.md)
 (GPIO chip, geth RPC / beacon REST endpoints, systemd unit names, poll
-interval, asset dir, install-status path, mock display).
+interval, install-status path, mock display).
 
 ### What the tiles mean on vOS
 

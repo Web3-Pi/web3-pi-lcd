@@ -1,0 +1,17 @@
+[Unit]
+Description=Web3 Pi LCD dashboard (w3p-hwm)
+Documentation=https://github.com/Web3-Pi/web3-pi-lcd
+# Comes up early — no network dependency. Assets are embedded in the binary and
+# a missing/unwired panel is handled in-process (retry with backoff), so the
+# unit stays active and self-heals rather than crash-looping.
+After=local-fs.target
+
+[Service]
+ExecStart=/usr/local/bin/w3p-hwm
+# /var/lib/w3p-hwm — holds the opening-animation "already played" flag.
+StateDirectory=w3p-hwm
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

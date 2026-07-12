@@ -1,5 +1,5 @@
 #!/bin/bash
-# Thin dev-runner: executes the prebuilt binary with assets from this directory.
+# Thin dev-runner: executes the prebuilt binary (assets are embedded).
 # No on-device compilation; build off-device with: mise run build-aarch64
 set -euo pipefail
 
@@ -18,5 +18,4 @@ if [[ -z "$BIN" ]]; then
     exit 1
 fi
 
-export W3P_ASSET_DIR="$SCRIPT_DIR"
 exec "$BIN"

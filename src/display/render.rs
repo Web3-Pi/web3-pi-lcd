@@ -1,8 +1,4 @@
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::{fs, time::Duration};
 
 use ab_glyph::{FontArc, PxScale};
 use anyhow::{Context, Result};
@@ -11,9 +7,12 @@ use image::{ImageBuffer, Rgb, RgbImage, imageops};
 use imageproc::drawing::{draw_line_segment_mut, draw_text_mut, text_size};
 use tracing::warn;
 
-use crate::app::{
-    config,
-    state::{AppState, ClientState, InstallStage},
+use crate::{
+    app::{
+        config,
+        state::{AppState, ClientState, InstallStage},
+    },
+    assets,
 };
 
 pub struct FontSet {
@@ -33,18 +32,18 @@ pub struct Renderer {
 
 impl Renderer {
     pub fn load() -> Result<Self> {
-        let font_bytes = fs::read(config::font_path())
-            .with_context(|| format!("read font {}", config::font_path().display()))?;
-        let font = FontArc::try_from_vec(font_bytes).context("parse font")?;
-        let bg_template = image::open(config::bg_path())
-            .with_context(|| format!("load background {}", config::bg_path().display()))?
+        let font = FontArc::try_from_vec(assets::font().to_vec()).context("parse font")?;
+        let bg_template = image::load_from_memory(assets::background())
+            .context("decode embedded background")?
             .resize_exact(
                 config::GRID_WIDTH,
                 config::GRID_HEIGHT,
                 imageops::FilterType::Nearest,
             )
             .to_rgb8();
-        let logo = image::open(config::logo_path()).context("load logo")?.to_rgb8();
+        let logo = image::load_from_memory(assets::logo())
+            .context("decode embedded logo")?
+            .to_rgb8();
         Ok(Self {
             font,
             fontset: FontSet {
@@ -268,8 +267,8 @@ impl Renderer {
     }
 
     pub fn final_screen() -> Result<RgbImage> {
-        let mut img = image::open(config::final_logo_path())
-            .context("load final logo")?
+        let mut img = image::load_from_memory(assets::final_logo())
+            .context("decode embedded final logo")?
             .to_rgb8();
         for pixel in img.pixels_mut() {
             let inv = [255 - pixel[0], 255 - pixel[1], 255 - pixel[2]];
@@ -298,25 +297,12 @@ impl Renderer {
         }
     }
 
-    pub fn animation_frames() -> Vec<PathBuf> {
-        let mut files = fs::read_dir(config::anim_dir())
-            .ok()
-            .into_iter()
-            .flat_map(|v| v.flatten())
-            .map(|entry| entry.path())
-            .filter(|path| {
-                path.extension()
-                    .and_then(|ext| ext.to_str())
-                    .map(|ext| ext.eq_ignore_ascii_case("png"))
-                    .unwrap_or(false)
-            })
-            .collect::<Vec<_>>();
-        files.sort();
-        files
+    pub fn animation_frames() -> Vec<&'static [u8]> {
+        assets::animation_frames()
     }
 
-    pub fn load_frame(path: &Path) -> Result<RgbImage> {
-        Ok(image::open(path)?.to_rgb8())
+    pub fn load_frame(bytes: &[u8]) -> Result<RgbImage> {
+        Ok(image::load_from_memory(bytes)?.to_rgb8())
     }
 
     pub fn frame_delay() -> Duration {

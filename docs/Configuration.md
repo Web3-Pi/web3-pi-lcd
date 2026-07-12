@@ -10,8 +10,7 @@ These values can be changed without recompiling.
 |---|---|---|
 | `RUST_LOG` | `info,w3p_hwm=debug` | Log filter. Example: `RUST_LOG=debug ./w3p-hwm` |
 | `W3P_GPIOCHIP` | auto | GPIO character device override: a path (`/dev/gpiochip0`) or a chip number (`0`). Without it the chip labelled `pinctrl-rp1` is used, falling back to `/dev/gpiochip0` |
-| `W3P_MOCK_DISPLAY` | unset | `1` uses a mock display instead of the ST7789 hardware (dev/desktop use; also skips the Raspberry Pi / SPI preflight checks). Without it a display init failure is fatal |
-| `W3P_ASSET_DIR` | executable's directory | Root directory for `font/` and `img/` assets (the systemd unit sets `/usr/local/share/w3p-hwm`) |
+| `W3P_MOCK_DISPLAY` | unset | `1` uses a mock display instead of the ST7789 hardware (dev/desktop use; also skips the Raspberry Pi / SPI preflight checks). Without it a display init failure is non-fatal: the service retries with backoff and stays active |
 | `W3P_GETH_RPC` | `http://127.0.0.1:8545` | geth JSON-RPC endpoint (EXEC tile) |
 | `W3P_BEACON_REST` | `http://127.0.0.1:5052` | Beacon node REST endpoint (CONS tile) |
 | `W3P_UNIT_EXEC` | `geth.service` | systemd unit checked for the EXEC tile |
@@ -44,17 +43,18 @@ These are Rust constants and require rebuild/redeploy after changes.
 
 ### Paths and Assets
 
-Asset paths (font, background, logos, animation frames) derive from the asset
-root — `W3P_ASSET_DIR`, else the executable's directory, else the current
-working directory:
+Assets are **embedded in the binary at compile time** (see `src/assets.rs`) from
+the repo's `font/` and `img/` trees — there is no on-disk asset directory and no
+`W3P_ASSET_DIR`. Changing an asset means replacing the source file and
+rebuilding.
 
-| Asset | Relative path |
+| Asset | Source path (compiled in) |
 |---|---|
 | Font | `font/JetBrainsMono-Medium.ttf` |
 | Dashboard background | `img/lcdbg.png` |
 | Install screen logo | `img/web3-pi-logo-240x70.png` |
 | Final shutdown screen logo | `img/Web3Pi_logo_0.png` |
-| Boot animation frames | `img/3D/` (missing directory skips the animation) |
+| Boot animation frames | `img/3D/` |
 
 | Constant | Default | Description |
 |---|---|---|

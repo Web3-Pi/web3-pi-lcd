@@ -1,9 +1,13 @@
 mod app;
+mod assets;
 mod display;
 mod platform;
 mod tasks;
 
-use std::{sync::Arc, time::Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context, Result};
 use app::{
@@ -15,8 +19,14 @@ use display::{
     st7789::{DisplayBackend, MockDisplay, St7789Display},
 };
 use image::RgbImage;
-use tokio::{signal, sync::RwLock, task::JoinSet, time};
+use tokio::{signal, sync::RwLock, time};
 use tracing::{debug, error, info, warn};
+
+/// Display-supervisor backoff bounds. When the panel can't be brought up (SPI
+/// off, nothing wired, GPIO busy) or drops out mid-run, we retry on this
+/// schedule instead of exiting — the unit stays `active` and self-heals.
+const DISPLAY_RETRY_MIN: Duration = Duration::from_secs(5);
+const DISPLAY_RETRY_MAX: Duration = Duration::from_secs(60);
 
 fn init_logging() {
     tracing_subscriber::fmt()
@@ -81,11 +91,11 @@ async fn preflight_checks() -> Result<()> {
 async fn play_animation<D: DisplayBackend + ?Sized>(display: &mut D) -> Result<()> {
     let frames = Renderer::animation_frames();
     if frames.is_empty() {
-        warn!(dir = %config::anim_dir().display(), "No opening animation frames found, skipping animation");
+        warn!("No opening animation frames embedded, skipping animation");
         return Ok(());
     }
-    for frame_path in frames {
-        let frame = Renderer::load_frame(&frame_path)?;
+    for frame_bytes in frames {
+        let frame = Renderer::load_frame(frame_bytes)?;
         if frame.width() != config::GRID_WIDTH || frame.height() != config::GRID_HEIGHT {
             continue;
         }
@@ -200,38 +210,19 @@ async fn shutdown_signal() {
     }
 }
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<()> {
-    init_logging();
-    info!("Hardware Monitor Start");
-    info!(
-        status_path = %config::install_status_path(),
-        vos_stage_path = config::VOS_INSTALL_STAGE_PATH,
-        asset_dir = %config::asset_dir().display(),
-        install_grace_seconds = config::install_startup_grace().as_secs(),
-        install_warn_rate_limit_seconds = config::INSTALL_WARN_RATE_LIMIT.as_secs(),
-        rust_log = std::env::var("RUST_LOG").unwrap_or_else(|_| "<not-set>".to_owned()),
-        "Runtime diagnostics"
-    );
-
-    if !mock_display_requested() {
+/// Bring the panel up and drive the render loop until a shutdown signal or a
+/// display failure. Returns `Ok(())` on a clean shutdown and `Err` if the panel
+/// could not be initialised or dropped out mid-run — the supervisor decides
+/// whether to retry.
+async fn run_display_session(mock: bool, renderer: &Renderer, state: SharedState) -> Result<()> {
+    if !mock {
         preflight_checks().await?;
     }
 
-    let state: SharedState = Arc::new(RwLock::new(AppState::default()));
-    let renderer = Renderer::load()?;
-
-    let mut display: Box<dyn DisplayBackend> = if mock_display_requested() {
-        info!("W3P_MOCK_DISPLAY=1 set, using mock display");
+    let mut display: Box<dyn DisplayBackend> = if mock {
         Box::new(MockDisplay::new())
     } else {
-        match St7789Display::new() {
-            Ok(d) => Box::new(d),
-            Err(err) => {
-                error!("Hardware display init failed: {err:#}");
-                return Err(err.context("hardware display init (set W3P_MOCK_DISPLAY=1 for a mock display)"));
-            }
-        }
+        Box::new(St7789Display::new().context("hardware display init")?)
     };
 
     display.init().context("display init")?;
@@ -246,59 +237,106 @@ async fn main() -> Result<()> {
         Renderer::create_opening_flag();
     }
 
-    let eth_cfg = EthStatusConfig::from_env();
-    let mut set = JoinSet::new();
-    set.spawn(tasks::system_metrics::high_frequency_loop(state.clone()));
-    set.spawn(tasks::system_metrics::medium_frequency_loop(state.clone()));
-    set.spawn(tasks::system_metrics::low_frequency_loop(state.clone()));
-    set.spawn(tasks::install_stage::install_stage_loop(state.clone()));
-    set.spawn(tasks::eth_status::eth_status_loop(state.clone(), eth_cfg));
-
-    // Runtime failures (render loop, background tasks) must exit non-zero so
-    // the systemd unit's Restart=on-failure actually restarts the service.
-    let run_result: Result<()> = {
-        let render_future = render_loop(display.as_mut(), &renderer, state.clone());
+    {
+        let render_future = render_loop(display.as_mut(), renderer, state);
         tokio::pin!(render_future);
         tokio::select! {
-            _ = shutdown_signal() => {
-                info!("Shutdown signal received");
-                Ok(())
-            }
+            _ = shutdown_signal() => info!("Shutdown signal received"),
             res = &mut render_future => {
-                match res {
-                    Ok(()) => {
-                        info!("Render loop exited");
-                        Ok(())
-                    }
-                    Err(err) => {
-                        error!("Render loop error: {err:#}");
-                        Err(err.context("render loop"))
-                    }
-                }
-            }
-            joined = set.join_next() => {
-                match joined {
-                    Some(Ok(Ok(()))) | None => {
-                        info!("Task ended");
-                        Ok(())
-                    }
-                    Some(Ok(Err(err))) => {
-                        error!("Task error: {err:#}");
-                        Err(err.context("background task"))
-                    }
-                    Some(Err(err)) => {
-                        error!("Task panic: {err}");
-                        Err(anyhow::Error::new(err).context("background task join"))
-                    }
-                }
+                res.context("render loop")?;
+                info!("Render loop exited");
             }
         }
-    };
+    }
 
-    set.abort_all();
+    // Best-effort dimmed logo on the way out; harmless no-op if the panel is gone.
     display_final_screen(display.as_mut()).await;
+    Ok(())
+}
+
+/// Spawn the background collectors. They never touch the panel, so they live for
+/// the whole process and log (rather than propagate) failures — a transient
+/// collector error must not tear the dashboard down.
+fn spawn_background_tasks(state: &SharedState) {
+    let eth_cfg = EthStatusConfig::from_env();
+    spawn_supervised(
+        "system_metrics_high",
+        tasks::system_metrics::high_frequency_loop(state.clone()),
+    );
+    spawn_supervised(
+        "system_metrics_medium",
+        tasks::system_metrics::medium_frequency_loop(state.clone()),
+    );
+    spawn_supervised(
+        "system_metrics_low",
+        tasks::system_metrics::low_frequency_loop(state.clone()),
+    );
+    spawn_supervised(
+        "install_stage",
+        tasks::install_stage::install_stage_loop(state.clone()),
+    );
+    spawn_supervised(
+        "eth_status",
+        tasks::eth_status::eth_status_loop(state.clone(), eth_cfg),
+    );
+}
+
+fn spawn_supervised<F>(name: &'static str, fut: F)
+where
+    F: std::future::Future<Output = Result<()>> + Send + 'static,
+{
+    tokio::spawn(async move {
+        match fut.await {
+            Ok(()) => info!(task = name, "Background task ended"),
+            Err(err) => error!(task = name, "Background task error: {err:#}"),
+        }
+    });
+}
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<()> {
+    init_logging();
+    info!("Hardware Monitor Start");
+    info!(
+        status_path = %config::install_status_path(),
+        vos_stage_path = config::VOS_INSTALL_STAGE_PATH,
+        install_grace_seconds = config::install_startup_grace().as_secs(),
+        install_warn_rate_limit_seconds = config::INSTALL_WARN_RATE_LIMIT.as_secs(),
+        rust_log = std::env::var("RUST_LOG").unwrap_or_else(|_| "<not-set>".to_owned()),
+        "Runtime diagnostics"
+    );
+
+    let state: SharedState = Arc::new(RwLock::new(AppState::default()));
+    let renderer = Renderer::load().context("load embedded renderer assets")?;
+
+    // Collectors run regardless of panel state so telemetry is fresh the moment
+    // a display appears.
+    spawn_background_tasks(&state);
+
+    let mock = mock_display_requested();
+    if mock {
+        info!("W3P_MOCK_DISPLAY=1 set, using mock display");
+    }
+
+    // Display supervisor: a missing or failing panel is NOT fatal. Retry with
+    // capped backoff so the unit stays `active` and self-heals when SPI is
+    // enabled / the panel is wired / a transient SPI error clears. Only a
+    // shutdown signal ends the process.
+    let mut backoff = DISPLAY_RETRY_MIN;
+    loop {
+        match run_display_session(mock, &renderer, state.clone()).await {
+            Ok(()) => break,
+            Err(err) => warn!(retry_in_seconds = backoff.as_secs(), "Display unavailable: {err:#}"),
+        }
+        tokio::select! {
+            _ = shutdown_signal() => break,
+            _ = time::sleep(backoff) => {}
+        }
+        backoff = backoff.saturating_mul(2).min(DISPLAY_RETRY_MAX);
+    }
+
     info!("Hardware Monitor End");
-    run_result
+    Ok(())
 }
 
 #[cfg(test)]

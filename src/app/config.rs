@@ -1,6 +1,5 @@
 use std::{
     path::PathBuf,
-    sync::OnceLock,
     time::Duration,
 };
 
@@ -13,43 +12,9 @@ pub const INSTALL_STATUS_PATH_DEFAULT: &str = "/opt/web3pi/status.jlog";
 pub const VOS_INSTALL_STAGE_PATH: &str = "/root/.install_stage";
 pub const STATE_DIR_DEFAULT: &str = "/var/lib/w3p-hwm";
 
-/// Asset root: `W3P_ASSET_DIR`, else the running executable's directory,
-/// else the current working directory.
-pub fn asset_dir() -> PathBuf {
-    static DIR: OnceLock<PathBuf> = OnceLock::new();
-    DIR.get_or_init(|| {
-        if let Ok(dir) = std::env::var("W3P_ASSET_DIR") {
-            return PathBuf::from(dir);
-        }
-        if let Ok(exe) = std::env::current_exe()
-            && let Some(parent) = exe.parent()
-        {
-            return parent.to_owned();
-        }
-        PathBuf::from(".")
-    })
-    .clone()
-}
-
-pub fn font_path() -> PathBuf {
-    asset_dir().join("font/JetBrainsMono-Medium.ttf")
-}
-
-pub fn bg_path() -> PathBuf {
-    asset_dir().join("img/lcdbg.png")
-}
-
-pub fn logo_path() -> PathBuf {
-    asset_dir().join("img/web3-pi-logo-240x70.png")
-}
-
-pub fn final_logo_path() -> PathBuf {
-    asset_dir().join("img/Web3Pi_logo_0.png")
-}
-
-pub fn anim_dir() -> PathBuf {
-    asset_dir().join("img/3D")
-}
+// Display assets (font, backgrounds, logos, opening animation) are embedded in
+// the binary at compile time — see `crate::assets`. There is no on-disk asset
+// tree and no `W3P_ASSET_DIR`.
 
 pub fn install_status_path() -> String {
     std::env::var("W3P_INSTALL_STATUS_PATH")

@@ -1,6 +1,8 @@
 #!/bin/bash
-# Install the prebuilt w3p-hwm binary + assets and register the systemd service.
+# Dev helper: install a LOCALLY built w3p-hwm binary + the canonical systemd
+# unit. For release installs on a device use install.sh instead.
 # Build off-device first: mise run build-aarch64 (cargo zigbuild).
+# Assets (font/img) are embedded in the binary — nothing else to copy.
 set -euo pipefail
 
 if [[ $EUID -ne 0 ]]; then
@@ -11,7 +13,6 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SERVICE_NAME="w3p-hwm"
 BIN_DEST="/usr/local/bin/w3p-hwm"
-ASSET_DEST="/usr/local/share/w3p-hwm"
 SERVICE_FILE="/etc/systemd/system/$SERVICE_NAME.service"
 
 BIN_SRC=""
@@ -28,31 +29,13 @@ if [[ -z "$BIN_SRC" ]]; then
 fi
 
 install -m 755 "$BIN_SRC" "$BIN_DEST"
-mkdir -p "$ASSET_DEST"
-cp -r "$SCRIPT_DIR/font" "$SCRIPT_DIR/img" "$ASSET_DEST/"
 
-# Remove the legacy unit from pre-vOS installs so two dashboard instances
-# never fight over SPI/GPIO (no-op on fresh systems).
+# Remove the legacy underscore unit from pre-release installs so two dashboard
+# instances never fight over SPI/GPIO (no-op on fresh systems).
 systemctl disable --now w3p_hwm.service 2>/dev/null || true
 rm -f /etc/systemd/system/w3p_hwm.service
 
-# Deliberately no After=network.target: the service must come up early in
-# boot; the eth/IP tasks tolerate absent network.
-cat <<EOF > "$SERVICE_FILE"
-[Unit]
-Description=Web3 Pi LCD dashboard (w3p-hwm)
-After=local-fs.target
-
-[Service]
-ExecStart=$BIN_DEST
-Environment=W3P_ASSET_DIR=$ASSET_DEST
-StateDirectory=w3p-hwm
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
+install -m 644 "$SCRIPT_DIR/packaging/w3p-hwm.service" "$SERVICE_FILE"
 
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME.service"
@@ -60,5 +43,5 @@ systemctl enable "$SERVICE_NAME.service"
 # service is already running, and still starts it on a fresh install.
 systemctl restart "$SERVICE_NAME.service"
 
-echo "Installed $BIN_DEST, assets in $ASSET_DEST."
+echo "Installed $BIN_DEST (assets embedded)."
 echo "The service $SERVICE_NAME has been created and started."
