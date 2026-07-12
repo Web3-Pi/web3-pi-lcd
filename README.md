@@ -1,12 +1,24 @@
 # Web3 Pi LCD (`web3-pi-lcd`)
 
+***The dedicated LCD dashboard for [Web3 Pi vOS](https://github.com/Web3-Pi/Web3-Pi-vOS).***
 
-***Introducing a unique hardware dashboard for Web3Pi project.***
+This repository builds and releases **`w3p-hwm`** — the firmware that drives the
+1.69" ST7789V2 SPI display on a Raspberry Pi 5 running Web3 Pi vOS. On the panel
+it shows the node at a glance: Ethereum client state (EXEC / CONS / VALI), sync,
+peer counts, CPU / RAM / disk / temperature, IP address and UPS status.
 
-> The dashboard firmware (`w3p-hwm`) ships as a **single self-contained aarch64
-> binary** — the font, logos and opening animation are embedded, so there is no
-> asset directory to deploy. On Web3 Pi vOS it is preinstalled and starts
-> automatically; the sections below cover standalone/manual use.
+**Relationship to Web3 Pi vOS.** On [Web3 Pi vOS](https://github.com/Web3-Pi/Web3-Pi-vOS)
+the binary is **preinstalled and enabled by the image build**, with SPI on by
+default, and is managed from the **Control Panel → System → LCD Display**
+(install/update, start/stop, logs). The vOS image pulls a versioned release from
+here, so you normally don't build or install from this repo directly — it exists
+so the display firmware is versioned and can be built/updated independently of
+the OS. The sections below cover standalone/manual use on a plain Web3 Pi image.
+
+> `w3p-hwm` ships as a **single self-contained aarch64 binary** — the font, logos
+> and opening animation are embedded, so there is no asset directory to deploy. A
+> missing or unwired panel is non-fatal: the service stays active and renders as
+> soon as a panel is present.
 
 The project allows for the installation of a colorful LCD in the Argon Neo 5 enclosure.
 We have designed our own 3D model of the enclosure cover with a space for the display. The assembly is simple, using snap-fits, with no tools required. The models are open-source, so anyone can print them on a 3D printer. The source code is also open-source, allowing users to add new functionalities, customize it to their needs, or add support for new displays.
