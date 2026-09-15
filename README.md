@@ -2,10 +2,10 @@
 
 ***The dedicated LCD dashboard for [Web3 Pi vOS](https://github.com/Web3-Pi/Web3-Pi-vOS).***
 
-This repository builds and releases **`w3p-hwm`** — the firmware that drives the
+This repository builds and releases **`w3p-hwm`** — the Rust application that drives the
 1.69" ST7789V2 SPI display on a Raspberry Pi 5 running Web3 Pi vOS. On the panel
 it shows the node at a glance: Ethereum client state (EXEC / CONS / VALI), sync,
-peer counts, CPU / RAM / disk / temperature, IP address and UPS status.
+peer counts, CPU / RAM / disk / temperature, IP address and hostname.
 
 **Relationship to Web3 Pi vOS.** On [Web3 Pi vOS](https://github.com/Web3-Pi/Web3-Pi-vOS)
 the binary is **preinstalled and enabled by the image build**, with SPI on by
@@ -71,7 +71,11 @@ service. Re-run any time to update.
 curl -sSL https://raw.githubusercontent.com/Web3-Pi/web3-pi-lcd/main/install.sh | sudo bash
 ```
 
-Pin a specific version: `... | sudo bash -s -- v0.2.0`.
+To pin a specific release, pass its tag explicitly:
+
+```shell
+curl -sSL https://raw.githubusercontent.com/Web3-Pi/web3-pi-lcd/main/install.sh | sudo bash -s -- v0.2.0
+```
 
 This installs the binary to `/usr/local/bin/w3p-hwm` and enables the
 `w3p-hwm.service` systemd unit. On Web3 Pi vOS you can also manage it from the
@@ -87,7 +91,14 @@ Build off-device with `mise run build-aarch64` (see
 
 ```shell
 sudo ./create_service.sh   # install the local binary + unit
-./run.sh                   # or run once in the foreground (Ctrl+C to stop)
+```
+
+For a foreground session, stop the installed service first so only one process
+owns the SPI/GPIO devices:
+
+```shell
+sudo systemctl stop w3p-hwm.service
+sudo ./run.sh             # Ctrl+C to stop
 ```
 
 ## Web3 Pi vOS
@@ -173,6 +184,19 @@ mise run build-aarch64
 target/aarch64-unknown-linux-gnu/release/w3p-hwm
 ```
 
+## Validation and desktop development
+
+Run the Rust checks from the repository root:
+
+```shell
+cargo test --locked
+cargo check --locked
+```
+
+For development on a Linux machine without a connected display, use
+`W3P_MOCK_DISPLAY=1 cargo run --bin w3p-hwm`. The mock backend skips Raspberry Pi
+and SPI checks; it does not validate physical wiring or panel output.
+
 ## Customisation
 
 In the Rust configuration file `src/app/config.rs`, there is a flag `SHOW_PER_CORE` that determines whether the CPU usage percentage should be in the range of `0-100%` or `0-400%`.
@@ -180,15 +204,15 @@ In the Rust configuration file `src/app/config.rs`, there is a flag `SHOW_PER_CO
 0-400% represents the summed load of each core in the Raspberry Pi.
 
 ```rust
-# Choose how to display CPU usage percentages
+// false: average across cores (0–100%)
+// true: sum across cores (0–400% on a four-core Raspberry Pi)
 pub const SHOW_PER_CORE: bool = false;
-# False = [0 - 100%]
-# True  = [0 - 400%]
 ```
-note: Restart the service after making changes.   
-```shell
-sudo systemctl restart w3p-hwm.service
-```
+This is a compile-time option. Rebuild with `mise run build-aarch64`, copy
+`target/aarch64-unknown-linux-gnu/release/w3p-hwm` to `./w3p-hwm` in the Pi's
+checkout, then run `sudo ./create_service.sh` there to install the updated
+binary and restart the service. Restarting the old
+binary alone does not apply source changes.
 
 For full runtime/configuration values, see [docs/Configuration.md](docs/Configuration.md).
 
